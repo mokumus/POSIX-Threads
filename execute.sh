@@ -1,1 +1,1 @@
-valgrind --leak-check=full --show-leak-kinds=all ./program homeworks.txt students.txt 10000
+./program homeworks.txt students.txt 10000
