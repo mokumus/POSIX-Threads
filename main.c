@@ -54,6 +54,7 @@ int fd_students, fd_homeworks, money;
 
 char *jobs;
 struct Student *student_data;
+pthread_t *thread_ids;
 
 // Function Prototypes
 
@@ -117,8 +118,9 @@ int main(int argc, char *argv[])
   n_students = lines(homeworks_file);
  
   // 2. Allocate Students struct array
-  struct Student *students = malloc(n_students * sizeof(struct Student));
-  
+  struct Student *students = malloc(n_students * sizeof(*students));
+  thread_ids = malloc(n_students * sizeof(*thread_ids));
+
   // 3. Populate students array & create threads
   printf(BOLDBLUE "=================================================\n" RESET);
   printf(BOLDYELLOW "%d students-for-hire threads have been created.\n" RESET, n_students);
@@ -136,13 +138,22 @@ int main(int argc, char *argv[])
     printf(BOLDWHITE "%-15s%-7d%-7d%-7d\n" RESET, students[i].name, students[i].quality, students[i].speed, students[i].price);
   }
   printf(BOLDBLUE "=================================================\n" RESET);
-
+  for (int i = 0; i < n_students; i++)
+    pthread_create(&thread_ids[i], NULL, student, &students[i]);
+  
   // Initilize Thread Data
 
   // Do Cheater Student Things
 
-  // Free resources
+  // Join threads and free resources =================================
+  for (int i = 0; i < n_students; i++){
+    pthread_join(thread_ids[i], NULL);
+  }
+    
+  
+  
   free(students);
+  free(thread_ids);
   close(fd_homeworks);
 
   return 0;
@@ -150,8 +161,9 @@ int main(int argc, char *argv[])
 
 void *student(void *data)
 {
-  printf("I am student\n");
-  pthread_exit(NULL);
+  struct Student *student = data;
+  printf("%s is waiting for a homework\n", student->name);
+  return NULL;
 }
 
 int lines(char *filename)
