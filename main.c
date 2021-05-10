@@ -12,6 +12,7 @@
 #include <fcntl.h>     // open(), O_CREAT, O_RDWR, O_RDONLY
 #include <pthread.h>   // all the pthread stuff
 #include <semaphore.h> // sem_init(), sem_wait(), sem_post(), sem_destroy()
+#include <sys/wait.h>  // sig_atomic_t
 
 #define MAX_NAME 256
 
@@ -46,6 +47,11 @@ struct Student
   int quality;
   int speed;
   int price;
+
+  //status variables
+  int homeworks_done;
+  int money_made;
+  int is_busy;
 };
 
 //Globals
@@ -56,20 +62,28 @@ char *jobs;
 struct Student *student_data;
 pthread_t *thread_ids;
 
+sig_atomic_t exit_requested = 0;
+sem_t sem_printf;
+
 // Function Prototypes
 
 // Parsing and printing.
 void print_usage(void);
-int lines(char *filename); // Get number of non-empty lines in a file
-char *read_line(int n);
+int lines(int fd); // Get number of non-empty lines in a file
+char *read_line(int fd, int n);
+void tsprintf(const char *format, ...);
 
 // Workers
 void *student(void *data);
+void cheater(int fd);
 
 // Wrappers
 int s_wait(sem_t *sem);
 int s_post(sem_t *sem);
 int s_init(sem_t *sem, int val);
+
+// Signal handler
+void sig_handler(int sig_no);
 
 int main(int argc, char *argv[])
 {
@@ -90,37 +104,37 @@ int main(int argc, char *argv[])
 
   for (int i = 1; i < 4; i++)
   {
-
-    switch (i)
-    {
-    case 1:
-      snprintf(students_file, MAX_NAME, "%s", argv[i]);
-      break;
-    case 2:
+    if (i == 1)
       snprintf(homeworks_file, MAX_NAME, "%s", argv[i]);
-      break;
-    case 3:
-      money = atoi(argv[i]);
-      break;
-    default:
-      errExit("Logic error while parsing");
-      break;
-    }
-  }
-  fd_homeworks = open(homeworks_file, O_RDONLY);
 
+    if (i == 2)
+      snprintf(students_file, MAX_NAME, "%s", argv[i]);
+
+    if (i == 3)
+      money = atoi(argv[i]);
+  }
+
+  setbuf(stdout, NULL);
+
+  // Read student data from file
+  fd_students = open(students_file, O_RDONLY);
+  if (fd_students == -1)
+    errExit("open");
+
+  // Read homeworks data from file
+  fd_homeworks = open(homeworks_file, O_RDONLY);
   if (fd_homeworks == -1)
     errExit("open");
 
-  // Read student data from file
-  
   // 1. Get number of students in the file
-  n_students = lines(homeworks_file);
- 
+  n_students = lines(fd_students);
+
   // 2. Allocate Students struct array
   struct Student *students = malloc(n_students * sizeof(*students));
   thread_ids = malloc(n_students * sizeof(*thread_ids));
 
+  // Initilize semaphores
+  
   // 3. Populate students array & create threads
   printf(BOLDBLUE "=================================================\n" RESET);
   printf(BOLDYELLOW "%d students-for-hire threads have been created.\n" RESET, n_students);
@@ -129,29 +143,28 @@ int main(int argc, char *argv[])
 
   for (int i = 0; i < n_students; i++)
   {
-
-    sscanf(read_line(i), "%s %d %d %d", students[i].name, 
-                                        &students[i].quality, 
-                                        &students[i].speed,
-                                        &students[i].price);
+    sscanf(read_line(fd_students, i), "%s %d %d %d", students[i].name,
+           &students[i].quality,
+           &students[i].speed,
+           &students[i].price);
 
     printf(BOLDWHITE "%-15s%-7d%-7d%-7d\n" RESET, students[i].name, students[i].quality, students[i].speed, students[i].price);
   }
   printf(BOLDBLUE "=================================================\n" RESET);
   for (int i = 0; i < n_students; i++)
     pthread_create(&thread_ids[i], NULL, student, &students[i]);
-  
+
   // Initilize Thread Data
 
   // Do Cheater Student Things
+  cheater(fd_homeworks);
 
   // Join threads and free resources =================================
-  for (int i = 0; i < n_students; i++){
+  for (int i = 0; i < n_students; i++)
+  {
     pthread_join(thread_ids[i], NULL);
   }
-    
-  
-  
+
   free(students);
   free(thread_ids);
   close(fd_homeworks);
@@ -166,13 +179,48 @@ void *student(void *data)
   return NULL;
 }
 
-int lines(char *filename)
+void cheater(int fd)
+{
+  char c;
+  int i = 0;
+  while (pread(fd, &c, 1, i++) || exit_requested != 0)
+  {
+
+    // Terminate on CTRL+C
+    if (exit_requested)
+    {
+      printf("Termination signal received, closing.\n");
+      // Print stats
+
+      return;
+    }
+
+    // Terminate if out of money(check if money is lower then all available students)
+
+    // Print stats
+
+    // Print new homework priority
+    printf("H has a new homework %c; remaining money is %dTL\n", c, money);
+
+    // Put it in the job que
+
+    // Wait for available worker
+  }
+
+  // Terminate if no more homeworks
+  printf("H has no other homeworks, terminating.\n");
+
+  // Print stats
+}
+
+int lines(int fd)
 {
   char c, last = '\n';
   int i = 0, lines = 0;
 
-  while (pread(fd_homeworks, &c, 1, i++))
+  while (pread(fd, &c, 1, i++))
   {
+
     if (c == '\n' && last != '\n')
       lines++;
     last = c;
@@ -183,12 +231,12 @@ int lines(char *filename)
   return lines;
 }
 
-char *read_line(int n)
+char *read_line(int fd, int n)
 {
   int line = 0, i = 0, k = 0;
   char c;
   static char buffer[MAX_NAME];
-  while (pread(fd_homeworks, &c, 1, i++) && line <= n)
+  while (pread(fd, &c, 1, i++) && line <= n)
   {
     if (line == n)
       buffer[k++] = c;
@@ -237,4 +285,19 @@ int s_init(sem_t *sem, int val)
     errExit("s_init");
 
   return ret;
+}
+
+void sig_handler(int sig_no)
+{
+  exit_requested = sig_no;
+}
+
+void tsprintf(const char *format, ...)
+{
+  va_list args;
+  va_start(args, format);
+
+  vprintf(format, args);
+
+  va_end(args);
 }
