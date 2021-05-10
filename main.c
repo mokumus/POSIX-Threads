@@ -13,6 +13,7 @@
 #include <pthread.h>   // all the pthread stuff
 #include <semaphore.h> // sem_init(), sem_wait(), sem_post(), sem_destroy()
 #include <sys/wait.h>  // sig_atomic_t
+#include <stdarg.h>
 
 #define MAX_NAME 256
 
@@ -56,15 +57,17 @@ struct Student
 
 //Globals
 char students_file[MAX_NAME], homeworks_file[MAX_NAME];
-int fd_students, fd_homeworks, money;
+int fd_students, fd_homeworks, money, n_students, n_jobs, max_jobs;
 
 char *jobs;
 struct Student *student_data;
 pthread_t *thread_ids;
+struct Student *students;
 
 sig_atomic_t exit_requested = 0;
 sem_t sem_printf;
-
+sem_t sem_access;
+sem_t sem_worker;
 // Function Prototypes
 
 // Parsing and printing.
@@ -77,6 +80,9 @@ void tsprintf(const char *format, ...);
 void *student(void *data);
 void cheater(int fd);
 
+// Worker helpers
+int have_enough_money(void);
+
 // Wrappers
 int s_wait(sem_t *sem);
 int s_post(sem_t *sem);
@@ -87,8 +93,6 @@ void sig_handler(int sig_no);
 
 int main(int argc, char *argv[])
 {
-  int n_students;
-
   // Input parsing & validation =======================
   if (argc < 4)
   {
@@ -130,11 +134,15 @@ int main(int argc, char *argv[])
   n_students = lines(fd_students);
 
   // 2. Allocate Students struct array
-  struct Student *students = malloc(n_students * sizeof(*students));
+  students = malloc(n_students * sizeof(*students));
   thread_ids = malloc(n_students * sizeof(*thread_ids));
+  jobs = malloc(max_jobs * sizeof(*jobs));
 
   // Initilize semaphores
-  
+  s_init(&sem_printf, 1);
+  s_init(&sem_access, 1);
+  s_init(&sem_worker, 0);
+
   // 3. Populate students array & create threads
   printf(BOLDBLUE "=================================================\n" RESET);
   printf(BOLDYELLOW "%d students-for-hire threads have been created.\n" RESET, n_students);
@@ -143,6 +151,7 @@ int main(int argc, char *argv[])
 
   for (int i = 0; i < n_students; i++)
   {
+    // Initilize Thread Data
     sscanf(read_line(fd_students, i), "%s %d %d %d", students[i].name,
            &students[i].quality,
            &students[i].speed,
@@ -154,19 +163,20 @@ int main(int argc, char *argv[])
   for (int i = 0; i < n_students; i++)
     pthread_create(&thread_ids[i], NULL, student, &students[i]);
 
-  // Initilize Thread Data
-
   // Do Cheater Student Things
   cheater(fd_homeworks);
 
   // Join threads and free resources =================================
   for (int i = 0; i < n_students; i++)
-  {
     pthread_join(thread_ids[i], NULL);
-  }
+
+  sem_destroy(&sem_printf);
+  sem_destroy(&sem_access);
+  sem_destroy(&sem_worker);
 
   free(students);
   free(thread_ids);
+  free(jobs);
   close(fd_homeworks);
 
   return 0;
@@ -175,7 +185,13 @@ int main(int argc, char *argv[])
 void *student(void *data)
 {
   struct Student *student = data;
-  printf("%s is waiting for a homework\n", student->name);
+  tsprintf(BOLDBLUE "%s is waiting for a homework\n" RESET, student->name);
+  
+  s_wait(&sem_access);
+
+  //n_jobs--;
+  money -= 500;
+  s_post(&sem_access);
   return NULL;
 }
 
@@ -185,32 +201,53 @@ void cheater(int fd)
   int i = 0;
   while (pread(fd, &c, 1, i++) || exit_requested != 0)
   {
+    // Fall trough
+    if (c == '\n')
+      break;
 
     // Terminate on CTRL+C
     if (exit_requested)
     {
-      printf("Termination signal received, closing.\n");
+      tsprintf(BOLDYELLOW "Termination signal received, closing.\n" RESET);
       // Print stats
 
       return;
     }
 
     // Terminate if out of money(check if money is lower then all available students)
-
-    // Print stats
+    if (!have_enough_money())
+    {
+      // Print stats
+      return;
+    }
 
     // Print new homework priority
-    printf("H has a new homework %c; remaining money is %dTL\n", c, money);
+    tsprintf(BOLDYELLOW "H has a new homework %c; remaining money is %dTL\n" RESET, c, money);
 
+    s_wait(&sem_access);
+
+    jobs[n_jobs++] = c;
+
+    s_post(&sem_access);
     // Put it in the job que
 
     // Wait for available worker
   }
 
   // Terminate if no more homeworks
-  printf("H has no other homeworks, terminating.\n");
+  tsprintf(BOLDYELLOW "H has no other homeworks, terminating.\n" RESET);
 
   // Print stats
+}
+
+int have_enough_money(void)
+{
+  for (int i = 0; i < n_students; i++)
+  {
+    if (students[i].price <= money)
+      return 1;
+  }
+  return 0;
 }
 
 int lines(int fd)
@@ -220,7 +257,7 @@ int lines(int fd)
 
   while (pread(fd, &c, 1, i++))
   {
-
+    max_jobs++;
     if (c == '\n' && last != '\n')
       lines++;
     last = c;
@@ -295,9 +332,11 @@ void sig_handler(int sig_no)
 void tsprintf(const char *format, ...)
 {
   va_list args;
+  s_wait(&sem_printf);
+
   va_start(args, format);
-
   vprintf(format, args);
-
   va_end(args);
+
+  s_post(&sem_printf);
 }
