@@ -186,9 +186,10 @@ void *student(void *data)
 {
   struct Student *student = data;
   tsprintf(BOLDBLUE "%s is waiting for a homework\n" RESET, student->name);
-  
+
   s_wait(&sem_access);
 
+  printf(BOLDBLUE "%s is solving homework Q for %d, H has %dTL left.\n" RESET, student->name, student->price, money);
   //n_jobs--;
   money -= 500;
   s_post(&sem_access);
@@ -242,11 +243,14 @@ void cheater(int fd)
 
 int have_enough_money(void)
 {
+  s_wait(&sem_access);
+
   for (int i = 0; i < n_students; i++)
   {
     if (students[i].price <= money)
       return 1;
   }
+  s_post(&sem_access);
   return 0;
 }
 
