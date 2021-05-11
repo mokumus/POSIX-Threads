@@ -57,7 +57,7 @@ struct Student
 
 //Globals
 char students_file[MAX_NAME], homeworks_file[MAX_NAME];
-int fd_students, fd_homeworks, money, n_students, n_jobs, max_jobs;
+int fd_students, fd_homeworks, money, n_students, jobs_done, jobs_given, max_jobs;
 
 char *jobs;
 struct Student *student_data;
@@ -67,12 +67,14 @@ struct Student *students;
 sig_atomic_t exit_requested = 0;
 sem_t sem_printf;
 sem_t sem_access;
-sem_t sem_worker;
+sem_t sem_nstored;
+sem_t sem_nempty;
 // Function Prototypes
 
 // Parsing and printing.
 void print_usage(void);
 int lines(int fd); // Get number of non-empty lines in a file
+int chars(int fd);
 char *read_line(int fd, int n);
 void tsprintf(const char *format, ...);
 
@@ -132,6 +134,7 @@ int main(int argc, char *argv[])
 
   // 1. Get number of students in the file
   n_students = lines(fd_students);
+  max_jobs = chars(fd_homeworks);
 
   // 2. Allocate Students struct array
   students = malloc(n_students * sizeof(*students));
@@ -141,8 +144,8 @@ int main(int argc, char *argv[])
   // Initilize semaphores
   s_init(&sem_printf, 1);
   s_init(&sem_access, 1);
-  s_init(&sem_worker, 0);
-
+  s_init(&sem_nstored, 0);
+  s_init(&sem_nempty, max_jobs);
   // 3. Populate students array & create threads
   printf(BOLDBLUE "=================================================\n" RESET);
   printf(BOLDYELLOW "%d students-for-hire threads have been created.\n" RESET, n_students);
@@ -172,7 +175,8 @@ int main(int argc, char *argv[])
 
   sem_destroy(&sem_printf);
   sem_destroy(&sem_access);
-  sem_destroy(&sem_worker);
+  sem_destroy(&sem_nstored);
+  sem_destroy(&sem_nempty);
 
   free(students);
   free(thread_ids);
@@ -185,14 +189,29 @@ int main(int argc, char *argv[])
 void *student(void *data)
 {
   struct Student *student = data;
-  tsprintf(BOLDBLUE "%s is waiting for a homework\n" RESET, student->name);
 
-  s_wait(&sem_access);
+  while (!exit_requested)
+  {
+    tsprintf(BOLDBLUE "%s is waiting for a homework\n" RESET, student->name);
+    s_wait(&sem_nstored);
+    s_wait(&sem_access);
 
-  printf(BOLDBLUE "%s is solving homework Q for %d, H has %dTL left.\n" RESET, student->name, student->price, money);
-  //n_jobs--;
-  money -= 500;
-  s_post(&sem_access);
+    printf("jobs done: %d\n", jobs_done);
+    printf("max_jobs: %d\n", max_jobs);
+    if (jobs_done >= max_jobs)
+    {
+      tsprintf(BOLDRED "%s is exitting\n" RESET, student->name);
+      s_post(&sem_nstored);
+      s_post(&sem_access);
+      return NULL;
+    }
+    printf(BOLDBLUE "%s is solving homework Q for %d, H has %dTL left.\n" RESET, student->name, student->price, money);
+    money -= 500;
+    jobs_done++;
+    s_post(&sem_access);
+    s_post(&sem_nempty);
+  }
+
   return NULL;
 }
 
@@ -200,45 +219,31 @@ void cheater(int fd)
 {
   char c;
   int i = 0;
-  while (pread(fd, &c, 1, i++) || exit_requested != 0)
+  while (!exit_requested)
   {
-    // Fall trough
-    if (c == '\n')
-      break;
 
-    // Terminate on CTRL+C
-    if (exit_requested)
+    s_wait(&sem_nempty);
+    s_wait(&sem_access);
+
+    if (jobs_given >= max_jobs)
     {
-      tsprintf(BOLDYELLOW "Termination signal received, closing.\n" RESET);
-      // Print stats
-
+      tsprintf(BOLDYELLOW "H has no other homeworks, terminating.\n" RESET);
+      s_post(&sem_nstored);
+      s_post(&sem_nempty);
+      s_post(&sem_access);
       return;
     }
 
-    // Terminate if out of money(check if money is lower then all available students)
-    if (!have_enough_money())
-    {
-      // Print stats
-      return;
-    }
+    pread(fd, &c, 1, i++);
+    jobs_given++;
 
     // Print new homework priority
     tsprintf(BOLDYELLOW "H has a new homework %c; remaining money is %dTL\n" RESET, c, money);
 
-    s_wait(&sem_access);
-
-    jobs[n_jobs++] = c;
-
+    
+    s_post(&sem_nstored);
     s_post(&sem_access);
-    // Put it in the job que
-
-    // Wait for available worker
   }
-
-  // Terminate if no more homeworks
-  tsprintf(BOLDYELLOW "H has no other homeworks, terminating.\n" RESET);
-
-  // Print stats
 }
 
 int have_enough_money(void)
@@ -261,7 +266,7 @@ int lines(int fd)
 
   while (pread(fd, &c, 1, i++))
   {
-    max_jobs++;
+
     if (c == '\n' && last != '\n')
       lines++;
     last = c;
@@ -270,6 +275,19 @@ int lines(int fd)
     lines++;
 
   return lines;
+}
+
+int chars(int fd)
+{
+  char c;
+  int i = 0, chars = 0;
+
+  while (pread(fd, &c, 1, i++))
+  {
+    if (c != '\n')
+      chars++;
+  }
+  return chars;
 }
 
 char *read_line(int fd, int n)
