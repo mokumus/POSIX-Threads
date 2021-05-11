@@ -195,7 +195,7 @@ void *student(void *data)
     tsprintf(BOLDBLUE "%s is waiting for a homework\n" RESET, student->name);
     s_wait(&sem_nstored);
 
-    if (jobs_done >= max_jobs || !have_enough_money())
+    if (!have_enough_money() || jobs_done >= max_jobs)
     {
       tsprintf(BOLDRED "%s is exitting\n" RESET, student->name);
       s_post(&sem_nstored);
@@ -205,6 +205,13 @@ void *student(void *data)
 
     s_wait(&sem_access);
     money -= student->price;
+    if (money <= 0)
+    {
+      money += student->price;
+      tsprintf(BOLDRED "%s is exitting\n" RESET, student->name);
+      s_post(&sem_access);
+      return NULL;
+    }
     printf(BOLDBLUE "%s is solving homework Q for %d, H has %dTL left.\n" RESET, student->name, student->price, money);
     jobs_done++;
     s_post(&sem_access);
@@ -221,8 +228,13 @@ void cheater(int fd)
   {
     if (jobs_given >= max_jobs || !have_enough_money())
     {
-      tsprintf(BOLDMAGENTA "H has no other homeworks, terminating.\n" RESET);
-      for(int k = 0; k < n_students; k++)
+      if (jobs_given >= max_jobs)
+        tsprintf(BOLDMAGENTA "H has no other homeworks, terminating.\n" RESET);
+
+      else if (!have_enough_money())
+        tsprintf(BOLDMAGENTA "H has no more money for homeworks, terminating.\n" RESET);
+
+      for (int k = 0; k < n_students; k++)
         s_post(&sem_nstored);
       return;
     }
@@ -236,7 +248,6 @@ void cheater(int fd)
     s_post(&sem_access);
 
     s_post(&sem_nstored);
-
   }
 }
 
