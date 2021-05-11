@@ -193,8 +193,8 @@ void *student(void *data)
   while (!exit_requested)
   {
     tsprintf(BOLDBLUE "%s is waiting for a homework\n" RESET, student->name);
-    //s_wait(&sem_nstored);
-    //s_wait(&sem_access);
+    s_wait(&sem_nstored);
+   // s_wait(&sem_access);
 
     if (jobs_done >= max_jobs)
     {
@@ -207,7 +207,7 @@ void *student(void *data)
     money -= student->price;
     jobs_done++;
     //s_post(&sem_access);
-    s_post(&sem_nempty);
+    //s_post(&sem_nempty);
   }
 
   return NULL;
@@ -220,14 +220,15 @@ void cheater(int fd)
   while (!exit_requested)
   {
 
-    s_wait(&sem_nempty);
+    //s_wait(&sem_nempty);
     //s_wait(&sem_access);
 
     if (jobs_given >= max_jobs)
     {
       tsprintf(BOLDMAGENTA "H has no other homeworks, terminating.\n" RESET);
-      //s_post(&sem_nstored);
-      s_post(&sem_nempty);
+      for(int k = 0; k < n_students; k++)
+        s_post(&sem_nstored);
+      //s_post(&sem_nempty);
       //s_post(&sem_access);
       return;
     }
@@ -239,7 +240,7 @@ void cheater(int fd)
     tsprintf(BOLDYELLOW "H has a new homework %c; remaining money is %dTL\n" RESET, c, money);
 
     
-    //s_post(&sem_nstored);
+    s_post(&sem_nstored);
     //s_post(&sem_access);
   }
 }
