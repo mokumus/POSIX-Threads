@@ -194,20 +194,20 @@ void *student(void *data)
   {
     tsprintf(BOLDBLUE "%s is waiting for a homework\n" RESET, student->name);
     s_wait(&sem_nstored);
-   // s_wait(&sem_access);
 
-    if (jobs_done >= max_jobs)
+    if (jobs_done >= max_jobs || !have_enough_money())
     {
       tsprintf(BOLDRED "%s is exitting\n" RESET, student->name);
       s_post(&sem_nstored);
-      //s_post(&sem_access);
+
       return NULL;
     }
-    printf(BOLDBLUE "%s is solving homework Q for %d, H has %dTL left.\n" RESET, student->name, student->price, money);
+
+    s_wait(&sem_access);
     money -= student->price;
+    printf(BOLDBLUE "%s is solving homework Q for %d, H has %dTL left.\n" RESET, student->name, student->price, money);
     jobs_done++;
-    //s_post(&sem_access);
-    //s_post(&sem_nempty);
+    s_post(&sem_access);
   }
 
   return NULL;
@@ -219,42 +219,37 @@ void cheater(int fd)
   int i = 0;
   while (!exit_requested)
   {
-
-    //s_wait(&sem_nempty);
-    //s_wait(&sem_access);
-
-    if (jobs_given >= max_jobs)
+    if (jobs_given >= max_jobs || !have_enough_money())
     {
       tsprintf(BOLDMAGENTA "H has no other homeworks, terminating.\n" RESET);
       for(int k = 0; k < n_students; k++)
         s_post(&sem_nstored);
-      //s_post(&sem_nempty);
-      //s_post(&sem_access);
       return;
     }
 
     pread(fd, &c, 1, i++);
     jobs_given++;
 
+    s_wait(&sem_access);
     // Print new homework priority
     tsprintf(BOLDYELLOW "H has a new homework %c; remaining money is %dTL\n" RESET, c, money);
+    s_post(&sem_access);
 
-    
     s_post(&sem_nstored);
-    //s_post(&sem_access);
+
   }
 }
 
 int have_enough_money(void)
 {
-  s_wait(&sem_access);
+  //s_wait(&sem_access);
 
   for (int i = 0; i < n_students; i++)
   {
     if (students[i].price <= money)
       return 1;
   }
-  s_post(&sem_access);
+  //s_post(&sem_access);
   return 0;
 }
 
@@ -305,6 +300,7 @@ char *read_line(int fd, int n)
       line++;
     }
   }
+  buffer[k] = '\0';
   return buffer;
 }
 
