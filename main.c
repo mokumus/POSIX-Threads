@@ -80,7 +80,7 @@ void tsprintf(const char *format, ...);
 
 // Workers
 void *student(void *data);
-void cheater(int fd);
+void *cheater(void *data);
 
 // Worker helpers
 int have_enough_money(void);
@@ -138,7 +138,7 @@ int main(int argc, char *argv[])
 
   // 2. Allocate Students struct array
   students = malloc(n_students * sizeof(*students));
-  thread_ids = malloc(n_students * sizeof(*thread_ids));
+  thread_ids = malloc((n_students+1) * sizeof(*thread_ids));
   jobs = malloc(max_jobs * sizeof(*jobs));
 
   // Initilize semaphores
@@ -163,14 +163,17 @@ int main(int argc, char *argv[])
     printf(BOLDWHITE "%-15s%-7d%-7d%-7d\n" RESET, students[i].name, students[i].quality, students[i].speed, students[i].price);
   }
   printf(BOLDBLUE "=================================================\n" RESET);
+
+  
+
   for (int i = 0; i < n_students; i++)
     pthread_create(&thread_ids[i], NULL, student, &students[i]);
 
-  // Do Cheater Student Things
-  cheater(fd_homeworks);
+  pthread_create(&thread_ids[n_students], NULL, cheater, NULL);
+
 
   // Join threads and free resources =================================
-  for (int i = 0; i < n_students; i++)
+  for (int i = 0; i < n_students+1; i++)
     pthread_join(thread_ids[i], NULL);
 
   sem_destroy(&sem_printf);
@@ -220,7 +223,7 @@ void *student(void *data)
   return NULL;
 }
 
-void cheater(int fd)
+void *cheater(void *data)
 {
   char c;
   int i = 0;
@@ -236,10 +239,10 @@ void cheater(int fd)
 
       for (int k = 0; k < n_students; k++)
         s_post(&sem_nstored);
-      return;
+      return NULL;
     }
 
-    pread(fd, &c, 1, i++);
+    pread(fd_homeworks, &c, 1, i++);
     jobs_given++;
 
     s_wait(&sem_access);
@@ -250,6 +253,7 @@ void cheater(int fd)
 
     
   }
+  return NULL;
 }
 
 int have_enough_money(void)
