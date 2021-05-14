@@ -47,7 +47,7 @@ struct Student
   char name[64];
   int quality;
   int speed;
-  int price;
+  int cost;
 
   //status variables
   int homeworks_done;
@@ -57,7 +57,7 @@ struct Student
 
 //Globals
 char students_file[MAX_NAME], homeworks_file[MAX_NAME];
-int fd_students, fd_homeworks, money, n_students, jobs_done, jobs_given, max_jobs;
+int fd_students, fd_homeworks, money, n_students, max_jobs, jobs_read, jobs_assigned;
 
 char *jobs;
 struct Student *student_data;
@@ -67,8 +67,7 @@ struct Student *students;
 sig_atomic_t exit_requested = 0;
 sem_t sem_printf;
 sem_t sem_access;
-sem_t sem_nstored;
-sem_t sem_nempty;
+sem_t sem_jobs_read;
 // Function Prototypes
 
 // Parsing and printing.
@@ -81,9 +80,12 @@ void tsprintf(const char *format, ...);
 // Workers
 void *student(void *data);
 void *cheater(void *data);
+void manager(void);
 
 // Worker helpers
 int have_enough_money(void);
+int select_student(char hw_type);
+int get_value(int i, char key);
 
 // Wrappers
 int s_wait(sem_t *sem);
@@ -138,14 +140,14 @@ int main(int argc, char *argv[])
 
   // 2. Allocate Students struct array
   students = malloc(n_students * sizeof(*students));
-  thread_ids = malloc((n_students+1) * sizeof(*thread_ids));
+  thread_ids = malloc((n_students + 1) * sizeof(*thread_ids));
   jobs = malloc(max_jobs * sizeof(*jobs));
 
   // Initilize semaphores
   s_init(&sem_printf, 1);
   s_init(&sem_access, 1);
-  s_init(&sem_nstored, 0);
-  s_init(&sem_nempty, max_jobs);
+  s_init(&sem_jobs_read, 0);
+
   // 3. Populate students array & create threads
   printf(BOLDBLUE "=================================================\n" RESET);
   printf(BOLDYELLOW "%d students-for-hire threads have been created.\n" RESET, n_students);
@@ -158,28 +160,26 @@ int main(int argc, char *argv[])
     sscanf(read_line(fd_students, i), "%s %d %d %d", students[i].name,
            &students[i].quality,
            &students[i].speed,
-           &students[i].price);
+           &students[i].cost);
 
-    printf(BOLDWHITE "%-15s%-7d%-7d%-7d\n" RESET, students[i].name, students[i].quality, students[i].speed, students[i].price);
+    printf(BOLDWHITE "%-15s%-7d%-7d%-7d\n" RESET, students[i].name, students[i].quality, students[i].speed, students[i].cost);
   }
   printf(BOLDBLUE "=================================================\n" RESET);
-
-  
 
   for (int i = 0; i < n_students; i++)
     pthread_create(&thread_ids[i], NULL, student, &students[i]);
 
   pthread_create(&thread_ids[n_students], NULL, cheater, NULL);
 
+  manager();
 
   // Join threads and free resources =================================
-  for (int i = 0; i < n_students+1; i++)
+  for (int i = 0; i < n_students + 1; i++)
     pthread_join(thread_ids[i], NULL);
 
   sem_destroy(&sem_printf);
   sem_destroy(&sem_access);
-  sem_destroy(&sem_nstored);
-  sem_destroy(&sem_nempty);
+  sem_destroy(&sem_jobs_read);
 
   free(students);
   free(thread_ids);
@@ -191,69 +191,59 @@ int main(int argc, char *argv[])
 
 void *student(void *data)
 {
-  struct Student *student = data;
-
-  while (!exit_requested)
-  {
-    tsprintf(BOLDBLUE "%s is waiting for a homework\n" RESET, student->name);
-    s_wait(&sem_nstored);
-
-    if (!have_enough_money() || jobs_done >= max_jobs)
-    {
-      tsprintf(BOLDRED "%s is exitting because %s\n" RESET, student->name, !have_enough_money() ? "dont have enough money" : "all jobs are done");
-      s_post(&sem_nstored);
-
-      return NULL;
-    }
-
-    s_wait(&sem_access);
-    money -= student->price;
-    if (money < 0)
-    {
-      money += student->price;
-      tsprintf(BOLDRED "%s is exitting\n" RESET, student->name);
-      s_post(&sem_access);
-      return NULL;
-    }
-    printf(BOLDBLUE "%s is solving homework Q for %d, H has %dTL left.\n" RESET, student->name, student->price, money);
-    jobs_done++;
-    s_post(&sem_access);
-  }
+  //struct Student *student = data;
 
   return NULL;
 }
 
 void *cheater(void *data)
 {
-  char c;
   int i = 0;
+  char c;
   while (!exit_requested)
   {
-    if (jobs_given >= max_jobs || !have_enough_money())
+    s_wait(&sem_access);
+    if (jobs_read >= max_jobs || !have_enough_money())
     {
-      if (jobs_given >= max_jobs)
-        tsprintf(BOLDMAGENTA "H has no other homeworks, terminating.\n" RESET);
-
-      else if (!have_enough_money())
-        tsprintf(BOLDMAGENTA "H has no more money for homeworks, terminating.\n" RESET);
-
-      for (int k = 0; k < n_students; k++)
-        s_post(&sem_nstored);
+      tsprintf(BOLDMAGENTA "H has no %s, terminating.\n" RESET, !have_enough_money() ? "more money for homeworks" : "other homeworks");
+      s_post(&sem_access);
       return NULL;
     }
-
+    // Valid homeworks & byte read
     pread(fd_homeworks, &c, 1, i++);
-    jobs_given++;
-
-    s_wait(&sem_access);
-    // Print new homework priority
-    tsprintf(BOLDYELLOW "H has a new homework %c; remaining money is %dTL\n" RESET, c, money);
-    s_post(&sem_nstored);
+    if (c == 'Q' || c == 'S' || c == 'C')
+    {
+      
+      tsprintf(MAGENTA "H has a new homework %c; remaining money is %dTL\n" RESET, c, money);
+      jobs[jobs_read++] = c;
+      s_post(&sem_jobs_read);
+      
+    }
     s_post(&sem_access);
-
     
   }
+
   return NULL;
+}
+
+void manager(void)
+{
+  while (!exit_requested)
+  {
+    s_wait(&sem_jobs_read);
+    s_wait(&sem_access);
+    
+    if (jobs_assigned >= max_jobs || !have_enough_money())
+    {
+      tsprintf(BOLDYELLOW "%s, closing.\n" RESET, !have_enough_money() ? "Money is over" : "No more homeworks left or coming in");
+      s_post(&sem_access);
+      return;
+    }
+
+    money -= 1050;
+    tsprintf(YELLOW "M assigning homework %c to x student, money left %dTL\n" RESET, jobs[jobs_assigned++], money);
+    s_post(&sem_access);
+  }
 }
 
 int have_enough_money(void)
@@ -263,11 +253,70 @@ int have_enough_money(void)
   for (int i = 0; i < n_students; i++)
   {
     //printf("mone: %d\n", money);
-    if (students[i].price <= money)
+    if (students[i].cost < money)
       return 1;
   }
   //s_post(&sem_access);
   return 0;
+}
+
+int select_student(char hw_type)
+{
+  int ret = -1;
+  int val = -1;
+  int cost = 999999;
+  for (int i = 0; i < n_students; i++)
+  {
+    int temp_cost = get_value(i, 'C');
+    //printf("cost: %d\n", temp_cost);
+    if (students[i].is_busy)
+      continue;
+    else if (hw_type == 'C')
+    {
+      if (cost > temp_cost)
+      {
+        cost = temp_cost;
+        ret = i;
+      }
+    }
+    else
+    {
+      int temp = get_value(i, hw_type);
+      //printf("temp: %d\n", temp);
+      if (val <= temp && cost > temp_cost)
+      {
+        val = temp;
+        ret = i;
+      }
+      else if (val < temp)
+      {
+        val = temp;
+        ret = i;
+      }
+    }
+  }
+
+  //printf("selected %d for job %c\n", ret, hw_type);
+  return ret;
+}
+
+int get_value(int i, char key)
+{
+  if (i >= n_students)
+    errExit("Index out of bounds");
+
+  switch (key)
+  {
+  case 'Q':
+    return students[i].quality;
+  case 'S':
+    return students[i].speed;
+  case 'C':
+    return students[i].cost;
+  default:
+    errExit("Invalid key");
+    ;
+  }
 }
 
 int lines(int fd)
@@ -295,7 +344,7 @@ int chars(int fd)
 
   while (pread(fd, &c, 1, i++))
   {
-    if (c != '\n')
+    if (c == 'Q' || c == 'S' || c == 'C')
       chars++;
   }
   return chars;
