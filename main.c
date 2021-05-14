@@ -16,6 +16,7 @@
 #include <stdarg.h>
 
 #define MAX_NAME 256
+#define MAX_MSG 256
 
 #define RESET "\033[0m"
 #define BLACK "\033[30m"              /* Black */
@@ -53,6 +54,8 @@ struct Student
   int homeworks_done;
   int money_made;
   int is_busy;
+
+  int pipe_fd[2];
 };
 
 //Globals
@@ -162,6 +165,9 @@ int main(int argc, char *argv[])
            &students[i].speed,
            &students[i].cost);
 
+    if (pipe(students[i].pipe_fd) == -1)
+      errExit("pipe");
+
     printf(BOLDWHITE "%-15s%-7d%-7d%-7d\n" RESET, students[i].name, students[i].quality, students[i].speed, students[i].cost);
   }
   printf(BOLDBLUE "=================================================\n" RESET);
@@ -191,7 +197,22 @@ int main(int argc, char *argv[])
 
 void *student(void *data)
 {
-  //struct Student *student = data;
+  struct Student *student = data;
+
+  while (!exit_requested)
+  {
+    char msg[MAX_MSG];
+    if (read(student->pipe_fd[0], &msg, sizeof(msg)))
+    {
+      if (msg[0] == 'e')
+      {
+        close(student->pipe_fd[0]);
+        return NULL;
+      }
+
+      printf("msg to %s: %s\n", student->name, msg);
+    }
+  }
 
   return NULL;
 }
@@ -206,6 +227,7 @@ void *cheater(void *data)
     if (jobs_read >= max_jobs || !have_enough_money())
     {
       tsprintf(BOLDMAGENTA "H has no %s, terminating.\n" RESET, !have_enough_money() ? "more money for homeworks" : "other homeworks");
+      s_post(&sem_jobs_read);
       s_post(&sem_access);
       return NULL;
     }
@@ -213,14 +235,12 @@ void *cheater(void *data)
     pread(fd_homeworks, &c, 1, i++);
     if (c == 'Q' || c == 'S' || c == 'C')
     {
-      
+
       tsprintf(MAGENTA "H has a new homework %c; remaining money is %dTL\n" RESET, c, money);
       jobs[jobs_read++] = c;
       s_post(&sem_jobs_read);
-      
     }
     s_post(&sem_access);
-    
   }
 
   return NULL;
@@ -232,15 +252,28 @@ void manager(void)
   {
     s_wait(&sem_jobs_read);
     s_wait(&sem_access);
-    
+
     if (jobs_assigned >= max_jobs || !have_enough_money())
     {
       tsprintf(BOLDYELLOW "%s, closing.\n" RESET, !have_enough_money() ? "Money is over" : "No more homeworks left or coming in");
+      for (int i = 0; i < n_students; i++)
+      {
+        char msg[MAX_MSG] = "exit message from manager\n";
+        write(students[i].pipe_fd[1], msg, MAX_MSG);
+        close(students[i].pipe_fd[1]);
+      }
       s_post(&sem_access);
       return;
     }
 
     int id = select_student(jobs[jobs_assigned]);
+
+    if (id == -1)
+      errExit("Logic error");
+
+    char msg[MAX_MSG] = "This is a message from manager\n";
+
+    write(students[id].pipe_fd[1], msg, MAX_MSG);
 
     money -= students[id].cost;
     tsprintf(YELLOW "M assigning homework %c to %s, money left %dTL\n" RESET, jobs[jobs_assigned++], students[id].name, money);
