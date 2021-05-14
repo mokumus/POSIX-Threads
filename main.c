@@ -197,7 +197,7 @@ void *student(void *data)
 
     if (!have_enough_money() || jobs_done >= max_jobs)
     {
-      tsprintf(BOLDRED "%s is exitting\n" RESET, student->name);
+      tsprintf(BOLDRED "%s is exitting because %s\n" RESET, student->name, !have_enough_money() ? "dont have enough money" : "all jobs are done");
       s_post(&sem_nstored);
 
       return NULL;
@@ -205,7 +205,7 @@ void *student(void *data)
 
     s_wait(&sem_access);
     money -= student->price;
-    if (money <= 0)
+    if (money < 0)
     {
       money += student->price;
       tsprintf(BOLDRED "%s is exitting\n" RESET, student->name);
@@ -245,9 +245,10 @@ void cheater(int fd)
     s_wait(&sem_access);
     // Print new homework priority
     tsprintf(BOLDYELLOW "H has a new homework %c; remaining money is %dTL\n" RESET, c, money);
+    s_post(&sem_nstored);
     s_post(&sem_access);
 
-    s_post(&sem_nstored);
+    
   }
 }
 
@@ -257,6 +258,7 @@ int have_enough_money(void)
 
   for (int i = 0; i < n_students; i++)
   {
+    //printf("mone: %d\n", money);
     if (students[i].price <= money)
       return 1;
   }
