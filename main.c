@@ -240,8 +240,10 @@ void manager(void)
       return;
     }
 
-    money -= 1050;
-    tsprintf(YELLOW "M assigning homework %c to x student, money left %dTL\n" RESET, jobs[jobs_assigned++], money);
+    int id = select_student(jobs[jobs_assigned]);
+
+    money -= students[id].cost;
+    tsprintf(YELLOW "M assigning homework %c to %s, money left %dTL\n" RESET, jobs[jobs_assigned++], students[id].name, money);
     s_post(&sem_access);
   }
 }
@@ -253,7 +255,7 @@ int have_enough_money(void)
   for (int i = 0; i < n_students; i++)
   {
     //printf("mone: %d\n", money);
-    if (students[i].cost < money)
+    if (students[i].cost <= money)
       return 1;
   }
   //s_post(&sem_access);
@@ -283,12 +285,12 @@ int select_student(char hw_type)
     {
       int temp = get_value(i, hw_type);
       //printf("temp: %d\n", temp);
-      if (val <= temp && cost > temp_cost)
+      if (val <= temp && cost > temp_cost && money >= temp_cost)
       {
         val = temp;
         ret = i;
       }
-      else if (val < temp)
+      else if (val < temp && money >= temp_cost)
       {
         val = temp;
         ret = i;
