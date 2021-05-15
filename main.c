@@ -185,6 +185,7 @@ int main(int argc, char *argv[])
 
   pthread_create(&thread_ids[n_students], NULL, cheater, NULL);
   pthread_detach(thread_ids[n_students]);
+  
   manager();
 
   // Join threads and free resources =================================
@@ -222,7 +223,6 @@ void *student(void *data)
       // Do homework
       if (msg[0] == student->name[0])
       {
-        //tsprintf(BOLDGREEN "%s, H has %dTL left.\n" RESET, msg, money);
         sleep(6 - student->speed);
         student->homeworks_done++;
         student->money_made += student->cost;
@@ -260,7 +260,6 @@ void *cheater(void *data)
     pread(fd_homeworks, &c, 1, i++);
     if (c == 'Q' || c == 'S' || c == 'C')
     {
-
       tsprintf(CYAN "H has a new homework %c; remaining money is %dTL\n" RESET, c, money);
       jobs[jobs_read++] = c;
       s_post(&sem_jobs_read);
@@ -280,7 +279,6 @@ void manager(void)
 
     if (jobs_assigned >= max_jobs || !have_enough_money())
     {
-
       for (int i = 0; i < n_students; i++)
       {
         char msg[MAX_MSG] = "exit message from manager\n";
@@ -322,7 +320,6 @@ void manager(void)
     tsprintf(GREEN "%s, H has %dTL left.\n" RESET, msg, money);
     jobs_assigned++;
 
-    //tsprintf(YELLOW "M assigning homework %c to %s, money left %dTL\n" RESET, jobs[jobs_assigned++], students[id].name, money);
     s_post(&sem_access);
   }
 
