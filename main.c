@@ -60,7 +60,7 @@ struct Student
 
 //Globals
 char students_file[MAX_NAME], homeworks_file[MAX_NAME];
-int fd_students, fd_homeworks, money, n_students, max_jobs, jobs_read, jobs_assigned;
+int fd_students, fd_homeworks, money, n_students, max_jobs, jobs_read, jobs_assigned, term_flag;
 
 char *jobs;
 struct Student *student_data;
@@ -72,7 +72,6 @@ sem_t sem_printf;
 sem_t sem_access;
 sem_t sem_jobs_read;
 sem_t sem_students;
-sem_t sem_search;
 // Function Prototypes
 
 // Parsing and printing.
@@ -91,6 +90,7 @@ void manager(void);
 int have_enough_money(void);
 int select_student(char hw_type);
 int get_value(int i, char key);
+void print_stats(void);
 
 // Wrappers
 int s_wait(sem_t *sem);
@@ -99,9 +99,6 @@ int s_init(sem_t *sem, int val);
 
 // Signal handler
 void sig_handler(int sig_no);
-
-// Debugging
-void print_available_students(void);
 
 int main(int argc, char *argv[])
 {
@@ -132,6 +129,8 @@ int main(int argc, char *argv[])
 
   setbuf(stdout, NULL);
 
+  signal(SIGINT, sig_handler);
+
   // Read student data from file
   fd_students = open(students_file, O_RDONLY);
   if (fd_students == -1)
@@ -156,7 +155,7 @@ int main(int argc, char *argv[])
   s_init(&sem_access, 1);
   s_init(&sem_jobs_read, 0);
   s_init(&sem_students, n_students);
-  s_init(&sem_search, 1);
+
   // 3. Populate students array & create threads
   printf(BOLDBLUE "=================================================\n" RESET);
   printf(BOLDYELLOW "%d students-for-hire threads have been created.\n" RESET, n_students);
@@ -174,6 +173,9 @@ int main(int argc, char *argv[])
     if (pipe(students[i].pipe_fd) == -1)
       errExit("pipe");
 
+    students[i].homeworks_done = 0;
+    students[i].money_made = 0;
+
     printf(BOLDWHITE "%-15s%-7d%-7d%-7d\n" RESET, students[i].name, students[i].quality, students[i].speed, students[i].cost);
   }
   printf(BOLDBLUE "=================================================\n" RESET);
@@ -182,18 +184,20 @@ int main(int argc, char *argv[])
     pthread_create(&thread_ids[i], NULL, student, &students[i]);
 
   pthread_create(&thread_ids[n_students], NULL, cheater, NULL);
-
+  pthread_detach(thread_ids[n_students]);
   manager();
 
   // Join threads and free resources =================================
-  for (int i = 0; i < n_students + 1; i++)
+  for (int i = 0; i < n_students; i++)
     pthread_join(thread_ids[i], NULL);
+
+  print_stats();
 
   sem_destroy(&sem_printf);
   sem_destroy(&sem_access);
   sem_destroy(&sem_jobs_read);
   sem_destroy(&sem_students);
-  sem_destroy(&sem_search);
+
   free(students);
   free(thread_ids);
   free(jobs);
@@ -209,28 +213,29 @@ void *student(void *data)
   while (!exit_requested)
   {
     char msg[MAX_MSG];
+    student->is_busy = 0;
+    tsprintf(GREEN "%s is waiting for a homework.\n" RESET, student->name);
 
-    tsprintf(GREEN "%s is waiting for a homework. //" RESET, student->name);
-    print_available_students();
-
-    if (read(student->pipe_fd[0], &msg, sizeof(msg)))
+    while (read(student->pipe_fd[0], &msg, sizeof(msg)))
     {
       student->is_busy = 1;
-      if (msg[0] == 'e')
+      // Do homework
+      if (msg[0] == student->name[0])
       {
-
+        //tsprintf(BOLDGREEN "%s, H has %dTL left.\n" RESET, msg, money);
+        sleep(6 - student->speed);
+        student->homeworks_done++;
+        student->money_made += student->cost;
+        student->is_busy = 0;
+        s_post(&sem_students);
+      }
+      else
+      {
         tsprintf(BOLDRED "%s is terminating.\n" RESET, student->name);
         close(student->pipe_fd[0]);
 
         return NULL;
       }
-      // Do homework
-      
-      //tsprintf(BOLDGREEN "%s, H has %dTL left.\n" RESET, msg, money);
-      sleep(6 - student->speed);
-
-      student->is_busy = 0;
-      s_post(&sem_students);
     }
   }
 
@@ -241,10 +246,10 @@ void *cheater(void *data)
 {
   int i = 0;
   char c;
-  while (!exit_requested)
+  while (!exit_requested || !term_flag)
   {
     s_wait(&sem_access);
-    if (jobs_read >= max_jobs || !have_enough_money())
+    if (jobs_read >= max_jobs || !have_enough_money() || term_flag)
     {
       tsprintf(BOLDMAGENTA "H has no %s, terminating.\n" RESET, !have_enough_money() ? "more money for homeworks" : "other homeworks");
       s_post(&sem_jobs_read);
@@ -282,8 +287,10 @@ void manager(void)
         write(students[i].pipe_fd[1], msg, MAX_MSG);
         close(students[i].pipe_fd[1]);
       }
-      s_post(&sem_access);
       tsprintf(BOLDYELLOW "%s, closing.\n" RESET, !have_enough_money() ? "Money is over" : "No more homeworks left or coming in");
+      term_flag = 1;
+      s_post(&sem_access);
+
       return;
     }
     s_wait(&sem_students);
@@ -292,7 +299,7 @@ void manager(void)
     if (id == -1)
       errExit("Logic error");
 
-    char msg[MAX_MSG];
+    char msg[MAX_MSG] = "";
     money -= students[id].cost;
     if (money < 0)
     {
@@ -303,9 +310,10 @@ void manager(void)
         write(students[i].pipe_fd[1], msg, MAX_MSG);
         close(students[i].pipe_fd[1]);
       }
-      s_post(&sem_access);
+      term_flag = 1;
       tsprintf(BOLDYELLOW "Can't afford the available student, closing.\n" RESET);
-      
+      s_post(&sem_access);
+
       return;
     }
     snprintf(msg, MAX_MSG, "%s is solving homework %c for %d", students[id].name, jobs[jobs_assigned], students[id].cost);
@@ -317,19 +325,26 @@ void manager(void)
     //tsprintf(YELLOW "M assigning homework %c to %s, money left %dTL\n" RESET, jobs[jobs_assigned++], students[id].name, money);
     s_post(&sem_access);
   }
+
+  if (exit_requested)
+  {
+    tsprintf(BOLDYELLOW "Termination signal received, closing.\n" RESET);
+    for (int i = 0; i < n_students; i++)
+    {
+      char msg[MAX_MSG] = "exit message from manager\n";
+      write(students[i].pipe_fd[1], msg, MAX_MSG);
+      close(students[i].pipe_fd[1]);
+    }
+  }
 }
 
 int have_enough_money(void)
 {
-  //s_wait(&sem_access);
-
   for (int i = 0; i < n_students; i++)
   {
-    //printf("mone: %d\n", money);
     if (students[i].cost <= money)
       return 1;
   }
-  //s_post(&sem_access);
   return 0;
 }
 
@@ -338,45 +353,48 @@ int select_student(char hw_type)
   int ret = -1;
   int val = -1;
   int cost = 999999;
-  //s_wait(&sem_access);
+  int temp = -1, temp_cost = -1;
+
   for (int i = 0; i < n_students; i++)
   {
-
-    //printf("cost: %d\n", temp_cost);
-    if (students[i].is_busy)
-      continue;
-
-    else if (hw_type == 'C')
+    if (!students[i].is_busy)
     {
-      int temp_cost = get_value(i, 'C');
+      temp = get_value(i, hw_type);
+      temp_cost = get_value(i, 'C');
       ret = i;
-      if (cost > temp_cost)
-      {
-        cost = temp_cost;
-        ret = i;
-      }
+      break;
     }
-    else
+  }
+
+  if (temp == -1)
+    errExit("Fatal error, all processes are busy");
+
+  for (int i = 0; i < n_students; i++)
+  {
+    if (!students[i].is_busy)
     {
-      int temp = get_value(i, hw_type);
-      int temp_cost = get_value(i, 'C');
-      ret = i;
-      //printf("temp: %d\n", temp);
-      if (val <= temp && cost > temp_cost && money >= temp_cost)
+      temp = get_value(i, hw_type);
+      temp_cost = get_value(i, 'C');
+
+      if (hw_type == 'C')
       {
-        val = temp;
-        ret = i;
+        if (cost > temp_cost)
+        {
+          cost = temp_cost;
+          ret = i;
+        }
       }
-      if (val < temp && money >= temp_cost)
+      else
       {
-        val = temp;
-        ret = i;
+        if ((val < temp || (val == temp && temp_cost < cost)) && money >= temp_cost)
+        {
+          val = temp;
+          cost = temp_cost;
+          ret = i;
+        }
       }
     }
   }
-  //s_post(&sem_access);
-
-  //printf("selected %d for job %c\n", ret, hw_type);
   return ret;
 }
 
@@ -397,6 +415,24 @@ int get_value(int i, char key)
     errExit("Invalid key");
     ;
   }
+}
+
+void print_stats(void)
+{
+  int total_hws = 0;
+  int total_spent = 0;
+  printf(BOLDBLUE "=================================================\n" RESET);
+  printf(BOLDBLUE "%-15s%-19s%-19s\n" RESET, "Name", "Homeworks Solved", "Money Made");
+  for (int i = 0; i < n_students; i++)
+  {
+    total_hws += students[i].homeworks_done;
+    total_spent += students[i].money_made;
+    printf(BOLDWHITE "%-15s%-19d%-19d\n" RESET, students[i].name, students[i].homeworks_done, students[i].money_made);
+  }
+
+  printf(BOLDWHITE "Total cost for %d homeworks %dTL\n" RESET, total_hws, total_spent);
+  printf(BOLDWHITE "Money left at G’s account: %dTL \n" RESET, money);
+  printf(BOLDBLUE "=================================================\n" RESET);
 }
 
 int lines(int fd)
@@ -449,15 +485,6 @@ char *read_line(int fd, int n)
   buffer[k] = '\0';
   return buffer;
 }
-
-void print_available_students(void){
-  for(int i = 0; i < n_students; i++){
-    if(!students[i].is_busy)
-      tsprintf("%s --", students[i].name);
-  }
-  tsprintf("\n");
-}
-
 
 void print_usage(void)
 {
