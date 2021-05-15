@@ -251,7 +251,7 @@ void *cheater(void *data)
     s_wait(&sem_access);
     if (jobs_read >= max_jobs || !have_enough_money() || term_flag)
     {
-      tsprintf(BOLDMAGENTA "H has no %s, terminating.\n" RESET, !have_enough_money() ? "more money for homeworks" : "other homeworks");
+      tsprintf(BOLDCYAN "H has no %s, terminating.\n" RESET, !have_enough_money() ? "more money for homeworks" : "other homeworks");
       s_post(&sem_jobs_read);
       s_post(&sem_access);
       return NULL;
@@ -261,7 +261,7 @@ void *cheater(void *data)
     if (c == 'Q' || c == 'S' || c == 'C')
     {
 
-      tsprintf(MAGENTA "H has a new homework %c; remaining money is %dTL\n" RESET, c, money);
+      tsprintf(CYAN "H has a new homework %c; remaining money is %dTL\n" RESET, c, money);
       jobs[jobs_read++] = c;
       s_post(&sem_jobs_read);
     }
