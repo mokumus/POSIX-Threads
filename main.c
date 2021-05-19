@@ -185,7 +185,7 @@ int main(int argc, char *argv[])
 
   pthread_create(&thread_ids[n_students], NULL, cheater, NULL);
   pthread_detach(thread_ids[n_students]);
-  
+
   manager();
 
   // Join threads and free resources =================================
@@ -281,7 +281,7 @@ void manager(void)
     {
       for (int i = 0; i < n_students; i++)
       {
-        char msg[MAX_MSG] = "exit message from manager\n";
+        char msg[MAX_MSG] = "_exit message from manager\n";
         write(students[i].pipe_fd[1], msg, MAX_MSG);
         close(students[i].pipe_fd[1]);
       }
@@ -304,7 +304,7 @@ void manager(void)
       money += students[id].cost;
       for (int i = 0; i < n_students; i++)
       {
-        char msg[MAX_MSG] = "exit message from manager\n";
+        char msg[MAX_MSG] = "_exit message from manager\n";
         write(students[i].pipe_fd[1], msg, MAX_MSG);
         close(students[i].pipe_fd[1]);
       }
@@ -328,7 +328,7 @@ void manager(void)
     tsprintf(BOLDYELLOW "Termination signal received, closing.\n" RESET);
     for (int i = 0; i < n_students; i++)
     {
-      char msg[MAX_MSG] = "exit message from manager\n";
+      char msg[MAX_MSG] = "_exit message from manager\n";
       write(students[i].pipe_fd[1], msg, MAX_MSG);
       close(students[i].pipe_fd[1]);
     }
